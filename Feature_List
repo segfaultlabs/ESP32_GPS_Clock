@@ -1,0 +1,58 @@
+1 break out the code into mutiple files. 
+
+Sure, let's break down the functions from your sketch into separate files:
+
+Main Sketch File (main.ino):
+Contains setup and loop functions.
+Includes global variables and the main control flow.
+GPSModule.h/.cpp:
+Functions related to GPS data processing and handling.
+getGPS()
+publishGPSData()
+LCDModule.h/.cpp:
+Functions related to LCD display management.
+displayTimeAndDate()
+displayWaitingForGPS()
+rotateInfoDisplay()
+TimeModule.h/.cpp:
+Functions related to time management and adjustments.
+adjustTimeZone()
+calculateTimeZoneOffset()
+SerialModule.h/.cpp:
+Functions related to serial communication and debugging.
+debugPrint()
+sendDataViaSerial()
+UtilityFunctions.h/.cpp:
+Utility functions used across modules.
+hdopDescription()
+printTime()
+Here's how you would organize these functions into separate files:
+
+main.ino:
+Contains setup, loop, and global variables.
+Includes: main.ino
+GPSModule.h/.cpp:
+Header file (GPSModule.h): Contains function declarations and any necessary includes.
+Functions: getGPS(), publishGPSData()
+Source file (GPSModule.cpp): Implements the functions declared in GPSModule.h.
+Includes: GPSModule.h, Arduino.h, TimeLib.h, TinyGPS++.h
+LCDModule.h/.cpp:
+Header file (LCDModule.h): Contains function declarations and any necessary includes.
+Functions: displayTimeAndDate(), displayWaitingForGPS(), rotateInfoDisplay()
+Source file (LCDModule.cpp): Implements the functions declared in LCDModule.h.
+Includes: LCDModule.h, Arduino.h, LiquidCrystal_I2C.h, Wire.h
+TimeModule.h/.cpp:
+Header file (TimeModule.h): Contains function declarations and any necessary includes.
+Functions: adjustTimeZone(), calculateTimeZoneOffset()
+Source file (TimeModule.cpp): Implements the functions declared in TimeModule.h.
+Includes: TimeModule.h, Arduino.h, TimeLib.h
+SerialModule.h/.cpp:
+Header file (SerialModule.h): Contains function declarations and any necessary includes.
+Functions: debugPrint(), sendDataViaSerial()
+Source file (SerialModule.cpp): Implements the functions declared in SerialModule.h.
+Includes: SerialModule.h, Arduino.h
+UtilityFunctions.h/.cpp:
+Header file (UtilityFunctions.h): Contains function declarations and any necessary includes.
+Functions: hdopDescription(), printTime()
+Source file (UtilityFunctions.cpp): Implements the functions declared in UtilityFunctions.h.
+Includes: UtilityFunctions.h, Arduino.h 
