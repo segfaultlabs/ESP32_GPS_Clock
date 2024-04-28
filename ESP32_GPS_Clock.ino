@@ -1,11 +1,34 @@
 #include <TinyGPS++.h>
 #include <HardwareSerial.h>
-#include <LiquidCrystal_I2C.h>
+//#include <LiquidCrystal_I2C.h>
+// OLED support
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+//
 #include <Wire.h>
 #include <TimeLib.h>
 #define LED_PIN 2
 // ToDo Build Serial menu for interacitons, passthrough NEMA, formatted NEMA, Drift checks of time, location, speed, abilty to configure timezone hardcoded,
 //
+// OLED support
+#define SCREEN_WIDTH 128  // OLED display width, in pixels
+#define SCREEN_HEIGHT 64  // OLED display height, in pixels
+
+// SPI OLED display connections using specified GPIOs of ESP32
+#define OLED_MOSI 23   // Master Out Slave In, corresponding to D1
+#define OLED_CLK 18    // Serial Clock, corresponding to D0
+#define OLED_DC 21     // Data/Command, corresponding to DC
+#define OLED_CS 5      // Chip Select, corresponding to CS
+#define OLED_RESET 22  // Reset, corresponding to RES
+
+// Initialize Adafruit SSD1306 OLED display
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, OLED_MOSI, OLED_CLK, OLED_DC, OLED_RESET, OLED_CS);
+// OLED support
+// set up the hardware
+HardwareSerial gpsSerial(1);  // GPS Module connected to UART1
+TinyGPSPlus gps;              // Create a GPS object
+//LiquidCrystal_I2C lcd(0x27, 16, 2);  // LCD address 0x27 for a 16 chars and 2 line display On pins 21 and 22, just try both ways to get it to work, remember 5v!!
+
 
 //set up the variables
 unsigned long lastSyncTime = 0;
@@ -20,39 +43,60 @@ bool timezoneOffsetUpdated = false;  // Flag to check if the timezone offset nee
 // Debug you say?
 bool debugEnabled = false;  // Set to false to disable debug output
 
+
+// Set up a variable to contain a NEMA sentance
+String latestNMEA = "";  // Holds the latest NMEA sentence received from the GPS
+
 // set up the counters
-const unsigned long GPSUpdateInterval = 2000;           // Time to update the internal clock from the GPS, we can do this all the time if we want
-const unsigned long timeUpdateInterval = 100;           // Time updates every 1000 milliseconds (1 second)
+const unsigned long GPSUpdateInterval = 50;             // Time to update the internal clock from the GPS, we can do this all the time if we want
+const unsigned long timeUpdateInterval = 100;           // Timeon the screen updates every 1000 milliseconds (1 second)
 const unsigned long infoUpdateInterval = 3000;          // Info updates every 3000 milliseconds (3 seconds)
 const unsigned long gpsDataPublishInterval = 10000;     // Set interval for publishing GPS data on the USB serial line, e.g., 5000 milliseconds (5 seconds)
 const unsigned long serialDataPublishInterval = 10000;  // set interval for publishing genral diagonstics device data on USB serial line
-const unsigned long timeZoneUpdateInterval = 6000;      // set interval for updating the TimeZone based off latitude and logitude.
+const unsigned long timeZoneUpdateInterval = 60000;     // set interval for updating the TimeZone based off latitude and logitude.
 
+// set up the icon locations
+// Calling the function with specific positions for the satellite icon and signal bars
+int satelliteIconX = 0;  // X coordinate for the satellite icon
+int satelliteIconY = 0;  // Y coordinate for the satellite icon
+int barsX = 105;         // X coordinate for the top-right position of the signal bars
+int barsY = 14;          // Y coordinate for the top-right position of the signal bars (just below the time)
+int gpsDataStartY = 25;  // Default starting position for GPS data
+int mainRX_X = 110;  // X position for RX icon
+int mainRX_Y = 54;   // Y position for RX icon
 
-// set up the hardware
-HardwareSerial gpsSerial(1);         // GPS Module connected to UART1
-TinyGPSPlus gps;                     // Create a GPS object
-LiquidCrystal_I2C lcd(0x27, 16, 2);  // LCD address 0x27 for a 16 chars and 2 line display On pins 21 and 22, just try both ways to get it to work, remember 5v!!
-
+bool isReceivingGPSData = false;    // Flag to indicate receiving data
+unsigned long lastGPSDataTime = 0;  // Last time GPS data was received
+unsigned long flashInterval = 200;  // Interval for flashing "RX"
+bool showRX = true;                // Whether to show "RX" or not
 
 void setup() {
   Serial.begin(115200);                       // Start the serial connection to the computer
   gpsSerial.begin(9600, SERIAL_8N1, 16, 17);  // Start gpsSerial communication
-  lcd.init();                                 // Initialize the LCD
-  lcd.backlight();                            // Turn on the backlight on the LCD
-  pinMode(2, OUTPUT);                         // ESP32 Onboard LED set as an output
-  bootTime = millis();                        // Record the time when the system started
-  setSyncProvider(getGPS);                    // Set the function used to get time from GPS
+  //lcd.init();                                 // Initialize the LCD
+  //lcd.backlight();                            // Turn on the backlight on the LCD
+  pinMode(2, OUTPUT);       // ESP32 Onboard LED set as an output
+  bootTime = millis();      // Record the time when the system started
+  setSyncProvider(getGPS);  // Set the function used to get time from GPS
+
+  // Initialize the OLED display
+  if (!display.begin(SSD1306_SWITCHCAPVCC)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for (;;)
+      ;  // Don't proceed, loop forever
+  }
+  display.display();       // Show initial display buffer contents on the screen -- the library initializes this with an Adafruit splash screen.
+  delay(200);              // Pause for 2 seconds
+  display.clearDisplay();  // Clear the buffer
 }
 
 void loop() {
-  static unsigned long lastGPSUpdate = 0;          // Timer for updating the device time from GPS
-  static unsigned long lastSecondUpdate = 0;       // Timer for updating the time on the LCD
-  static unsigned long lastInfoUpdate = 0;         // Timer for publishing GPS info to LCD
+  static unsigned long lastGPSUpdate = 0;     // Timer for updating the device time from GPS
+  static unsigned long lastSecondUpdate = 0;  // Timer for updating the time on the LCD
+  //static unsigned long lastInfoUpdate = 0;         // Timer for publishing GPS info to LCD
   static unsigned long lastGPSDataPublish = 0;     // Timer for publishing GPS data
   static unsigned long lastSerialDataPublish = 0;  // Timer for publishing system data via serial
   static unsigned long lastTimezoneUpdate = 0;     // Timer for resetting the timezone offset, this is incase the device is on the move.
-
 
   debugPrint("Entering loop...");
 
@@ -60,7 +104,12 @@ void loop() {
   if (millis() - lastGPSUpdate >= GPSUpdateInterval) {
     lastGPSUpdate = millis();
     if (gpsSerial.available() > 0) {
+      if (!isReceivingGPSData) {
+        isReceivingGPSData = true;
+      }
+      lastGPSDataTime = millis();  // Update the last time data was received
       debugPrint("Reading GPS data...");
+      //      while (gpsSerial.available() > 0) {  ///// I think i need to change this to an If, not a while as it currently loops many times?
       while (gpsSerial.available() > 0) {
         if (gps.encode(gpsSerial.read())) {  // Read and encode GPS data
           debugPrint("GPS data encoded successfully.");
@@ -72,6 +121,18 @@ void loop() {
           debugPrint("Negated (!hasGPSFix) status: " + String(!hasGPSFix ? "true" : "false"));
           ledState = !ledState;
           digitalWrite(LED_PIN, ledState);
+
+          if (gpsSerial.available() > 0) {
+            char c = gpsSerial.read();
+            if (gps.encode(c)) {
+              latestNMEA += c;               // Append the read character to the latest NMEA string
+              if (c == '\n') {               // If the end of the line
+                Serial.println(latestNMEA);  // Print the full NMEA sentence to Serial Monitor
+                latestNMEA = "";             // Optionally reset latestNMEA after printing
+              }
+            }
+          }
+
           if (gps.location.isValid() && gps.time.isValid()) {  // once we have a lock on where we are and what time it is we can set the time.
             debugPrint("GPS fix acquired.");
             setTime(getGPS());  // Set system time with GPS time
@@ -100,17 +161,9 @@ void loop() {
       debugPrint("Updating time display... Waiting message displayed");
     } else {
       //adjustTimeZone();      // Adjust system time for local timezone
-      displayTimeAndDate();  // Display current time and date
+      //displayTimeAndDate(satelliteIconX, satelliteIconY, barsX, barsY);  // use the variables here.
+      displayTimeAndDate(satelliteIconX, satelliteIconY, barsX, barsY, mainRX_X, mainRX_Y);
       debugPrint("Updating time display... Displaying time and Date");
-    }
-  }
-
-  // Rotate info display every 2 seconds
-  if (millis() - lastInfoUpdate >= infoUpdateInterval) {
-    lastInfoUpdate = millis();
-    if (hasGPSFix) {  // Only update info if a GPS fix has been acquired
-      debugPrint("Rotating info display...");
-      rotateInfoDisplay();  // Rotate through additional GPS data on display
     }
   }
 
@@ -139,16 +192,11 @@ void loop() {
     }
   }
 
-  // Send diagnostics data via serial on its own timer
-  if (millis() - lastSerialDataPublish >= serialDataPublishInterval) {
-    lastSerialDataPublish = millis();
-    //debugPrint("Sending diagnostics data via serial...");
-    //sendDataViaSerial();  // Send the current time to USB serial
-  }
+  ledState = LOW;
+  digitalWrite(LED_PIN, ledState);
 
-  delay(50);  // Short delay to reduce CPU usage
+  delay(10);  // Short delay to reduce CPU usage
 }
-
 
 // helper function to deploy debugs
 void debugPrint(const String& message) {
@@ -208,23 +256,152 @@ time_t getGPS() {
  * MM is month. This function assumes that the system time has been previously set and
  * is maintained accurately (e.g., via an NTP server, RTC, or GPS time sync).
  */
-void displayTimeAndDate() {
-  char buffer[20];  // Buffer to hold the formatted time and date strings.
-  // Format the current time as "HH:MM:SS" and store it in the buffer.
-  // Spaces are added after the seconds to ensure any previous data displayed is fully cleared.
-  sprintf(buffer, "%02d:%02d:%02d    ", hour(), minute(), second());
-  // Set the cursor to the beginning of the first line of the LCD.
-  lcd.setCursor(0, 0);
-  // Print the formatted time to the LCD.
-  lcd.print(buffer);
-  // Format the current date as "DD/MM" and store it in the buffer.
-  // Again, spaces are added to clear any residual characters from previous displays.
-  sprintf(buffer, "%02d/%02d    ", day(), month() % 100);
-  // Move the cursor to position 11 on the first line to start printing the date.
-  lcd.setCursor(11, 0);
-  // Print the formatted date to the LCD.
-  lcd.print(buffer);
+
+void displayTimeAndDate(int satelliteIconX, int satelliteIconY, int barsX, int barsY, int rxX, int rxY) {
+    static unsigned long lastUpdate = 0;
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastUpdate > 1000) {  // Update the display every second
+        lastUpdate = currentMillis;
+
+        display.clearDisplay();
+        display.setTextSize(2);  // Larger text size for time
+        display.setTextColor(SSD1306_WHITE);
+
+        // Create time string
+        char timeBuffer[20];
+        sprintf(timeBuffer, "%02d:%02d:%02d", hour(), minute(), second());
+
+        // Position and display time
+        display.setCursor(0, 0);  // Position time at the top left
+        display.println(timeBuffer);
+
+        // Create date string with smaller font
+        char dateBuffer[20];
+        sprintf(dateBuffer, "%02d/%02d/%04d", day(), month(), year());
+        display.setTextSize(1);    // Smaller text size for date
+        display.setCursor(0, 16);  // Position below time
+        display.println(dateBuffer);
+
+        // Draw the signal bar at a configurable position
+        displaySignalBar(barsX, barsY);
+
+        // Update the RX display at the specified position
+        //manageRXDisplay(rxX, rxY);
+
+        // Additional GPS data display
+        displayAllGPSData();
+
+        display.display();  // Update the display with the new data
+    }
 }
+
+void displaySignalBar(int xStart, int yStart) {
+  static unsigned long lastToggle = 0;
+  static bool showBars = true;
+  unsigned long currentMillis = millis();
+
+  float hdop = gps.hdop.hdop();
+  int bars = 0;
+
+  // Define bars based on HDOP
+  if (hdop < 1.0) bars = 5;
+  else if (hdop < 2.0) bars = 4;
+  else if (hdop < 5.0) bars = 3;
+  else if (hdop < 10.0) bars = 2;
+  else if (hdop >= 10.0) bars = 1;
+
+  if (hdop > 5.0) {
+    if (currentMillis - lastToggle > 500) {
+      showBars = !showBars;
+      lastToggle = currentMillis;
+    }
+  } else {
+    showBars = true;
+  }
+
+  int barWidth = 3;
+
+  if (showBars) {
+    for (int i = 0; i < bars; i++) {
+      int barHeight = 2 + i * 3;
+      display.fillRect(xStart + i * 6, yStart - barHeight, barWidth, barHeight, SSD1306_WHITE);
+    }
+  }
+}
+
+void manageRXDisplay(int rxX, int rxY) {
+    unsigned long currentMillis = millis();
+    
+    // Toggle the RX display based on the flash interval
+    if (isReceivingGPSData && (currentMillis - lastGPSDataTime > flashInterval)) {
+        showRX = !showRX;  // Toggle the RX display
+        lastGPSDataTime = currentMillis; // Reset timer for flashing
+        Serial.print("Toggling RX to: ");
+        Serial.println(showRX ? "ON" : "OFF");
+    } else {
+        showRX = false;  // Stop showing "RX" if no data received recently
+        Serial.println("No recent GPS data, turning RX off");
+    }
+
+    // Update the display with the RX status
+    display.setCursor(rxX, rxY);
+    if (showRX) {
+        display.print("RX");
+    } else {
+        display.print("  ");  // Print spaces to clear the "RX"
+    }
+    display.display();  // Ensure to update the display after changing content
+}
+
+
+
+// void manageRXDisplay(int rxX, int rxY) {
+//     unsigned long currentMillis = millis();
+    
+//     // Check if data was received in the last second
+//     if (isReceivingGPSData && (currentMillis - lastGPSDataTime < 1000)) {
+//         // Toggle the RX display based on the flash interval
+//         if (currentMillis - lastGPSDataTime > flashInterval) {
+//             showRX = !showRX;  // Toggle the RX display
+//             lastGPSDataTime = currentMillis; // Reset timer for flashing
+//             Serial.print("Toggling RX to: ");
+//             Serial.println(showRX ? "ON" : "OFF");
+//         }
+//     } else {
+//         isReceivingGPSData = false;
+//         showRX = false;  // Stop showing "RX" if no data received recently
+//         Serial.println("No recent GPS data, turning RX off");
+//     }
+
+//     // Update the display with the RX status
+//     display.setCursor(rxX, rxY);
+//     if (showRX) {
+//         display.print("RX");
+//     } else {
+//         display.print("  ");  // Print spaces to clear the "RX"
+//     }
+// }
+
+
+// void manageRXDisplay(int rxX, int rxY) {
+//     if (isReceivingGPSData && (millis() - lastGPSDataTime < 1000)) {
+//         if (millis() - lastGPSDataTime > flashInterval) {
+//             showRX = !showRX;  // Toggle the RX display
+//             lastGPSDataTime = millis(); // Reset timer for flashing
+//         }
+//     } else {
+//         isReceivingGPSData = false;
+//         showRX = false;  // Stop showing "RX" if no data received recently
+//     }
+
+//     if (showRX) {
+//         display.setCursor(rxX, rxY);  // Use the provided position for "RX"
+//         display.print("RX");
+//     } else {
+//         display.setCursor(rxX, rxY);  // Ensure to clear the previous "RX"
+//         display.print("  ");  // Print spaces to clear the "RX"
+//     }
+// }
 
 /**
  * @brief Displays a waiting message on the LCD while the system is waiting for a GPS fix.
@@ -234,24 +411,36 @@ void displayTimeAndDate() {
  * in seconds, updating every second. This function uses a static variable to keep track
  * of the last update time, ensuring the display is refreshed at one-second intervals.
  */
+
 void displayWaitingForGPS() {
-  static unsigned long lastUpdate = 0;  // Holds the last time the display was updated
-  // Check if more than 1000 milliseconds (1 second) have passed since the last update
-  if (millis() - lastUpdate > 1000) {
-    lastUpdate = millis();  // Update the last update time to the current time
-    // Set the cursor to the beginning of the first line of the LCD
-    lcd.setCursor(0, 0);
-    // Print the waiting message on the first line of the LCD
-    // Additional spaces at the end ensure any previous content is cleared
-    lcd.print("Waiting for GPS!!   ");
-    // Set the cursor to the beginning of the second line of the LCD
-    lcd.setCursor(0, 1);
-    // Print "Up Time: " followed by the system uptime in seconds
-    // The uptime is calculated as the current time minus the boot time, divided by 1000 to convert milliseconds to seconds
-    lcd.print("Up Time: ");
-    lcd.print((millis() - bootTime) / 1000);
-  }
-  lcd.blink();  // Enable blinking of the LCD text to make the wait more noticeable
+  static int animationFrame = 0;  // This will keep track of the animation frame
+
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+
+  // Display a static message
+  display.println("Waiting for GPS!!");
+  // TODO: fix this, need to move it to a set positino as its floating it displayis under the up time
+  // Simple animation - rotating slash
+  char animationChars[4] = { '|', '/', '-', '\\' };
+  display.print("Loading ");
+  display.print(animationChars[animationFrame]);
+  animationFrame = (animationFrame + 1) % 4;  // Update frame
+
+  // Display up time
+  display.setCursor(0, 10);
+  display.print("Up Time: ");
+  display.print((millis() - bootTime) / 1000);
+
+  // Display the latest NMEA sentence
+  display.setCursor(0, 20);
+  display.print("NMEA: ");
+  display.print(latestNMEA);
+
+  display.display();
+  delay(250);  // Slow down the animation a bit
 }
 
 /**
@@ -337,51 +526,36 @@ String hdopDescription(float hdop) {
   if (hdop < 2.0) return "Perfect";
   if (hdop < 5.0) return "Good";
   if (hdop < 7.0) return "OK";
-  if (hdop < 10.0) return "Fair";
+  if (hdop < 10.0) return "Poor";
   return "BAD!";
 }
 
-void rotateInfoDisplay() {
-  lcd.setCursor(0, 1);  // Set cursor to the beginning of the second line
-  String info;
-  // Check if we have a situation with Low Latitude.
-  if (gps.location.isValid() && gps.location.lat() < 0.1) {
-    lcd.noBlink();  // Turn off blinking if previously on
-    //lcd.clear();    // Clear previous display
-    lcd.setCursor(0, 1);                    // Reset cursor to the start of the first line
-    lcd.print(" WARNING LOW LAT!       ");  // Display warning message
-    lcd.blink();                            // Enable blinking to draw attention to the message
-  } else {
-    float hdopValue;              // Declare hdopValue outside the switch statement
-                                  // Select the information to display based on the current page
-    switch (displayPage++ % 6) {  // changed from 6 to 7 due to chaning view options
-      case 0: info = "ALT: " + String(gps.altitude.meters()) + "m"; break;
-      case 1: info = "Satalites: " + String(gps.satellites.value()); break;
-      case 2:
-        hdopValue = gps.hdop.hdop();
-        info = "HDOP: " + String(hdopValue, 1);
-        break;  // Use hdopValue here
-      case 3:
-        hdopValue = gps.hdop.hdop();
-        info = "Signal: " + hdopDescription(hdopValue);
-        break;
-      case 4: info = "Uptime : " + String(millis() / 1000) + "s"; break;
-      case 5:
-        info = "UTC Offset: " + String(timezoneOffset);
-        break;  // Display the stored timezone offset
-        //case 4: info = "LAT:" + String(gps.location.lat(), 6); break;
-        //case 5: info = "LONG:" + String(gps.location.lng(), 6); break;
-        //case 6: info = "SPEED:" + String(gps.speed.kmph()) + "km/h"; break;
-        //case 7: info = "Temp: " + String(temperatureRead()) + "°C"; break;
-    }
-    // Ensure the info string fits in the LCD's width and clears extra characters
-    int spacesNeeded = 16 - info.length();  // Assumes a 16-character wide display
-    if (spacesNeeded > 0) {
-      info += String("                ").substring(0, spacesNeeded);
-    }
-    lcd.print(info);  // Print the information followed by enough spaces to clear the rest of the line
-  }
+void displayAllGPSData() {
+  display.setTextSize(1);               // Set text size for more data on the screen
+  display.setTextColor(SSD1306_WHITE);  // Set text color
+
+  int yPos = gpsDataStartY;  // Use the global variable for the start position
+  int lineSpacing = 9;       // Space between lines
+
+  // Display each piece of information on a new line
+  display.setCursor(0, yPos);
+  display.println("Altitude: " + String(gps.altitude.meters()) + "m");
+
+  display.setCursor(0, yPos + lineSpacing * 1);
+  display.println("Satalites: " + String(gps.satellites.value()));
+
+  display.setCursor(0, yPos + lineSpacing * 2);
+  display.println("Lat: " + String(gps.location.lat(), 6));
+
+  display.setCursor(0, yPos + lineSpacing * 3);
+  display.println("Lon: " + String(gps.location.lng(), 6));
+
+  display.setCursor(0, yPos + lineSpacing * 4);
+  display.println("UTC Offset: " + String(timezoneOffset));
+
+  display.display();
 }
+
 
 // push data to serial,
 void publishGPSData() {
