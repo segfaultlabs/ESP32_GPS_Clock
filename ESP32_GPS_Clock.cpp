@@ -1,14 +1,59 @@
 #include <Arduino.h>
 #include <TinyGPS++.h>
 #include <HardwareSerial.h>
-//#include <LiquidCrystal_I2C.h>
-// OLED support
+// Servo Support
+#include <ESP32Servo.h>
+// OLED Support
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <Wire.h>
 #include <TimeLib.h>
 #define LED_PIN 2
-// ToDo Build Serial menu for interacitons, passthrough NEMA, formatted NEMA, Drift checks of time, location, speed, abilty to configure timezone hardcoded,
+// ToDo 
+// Build Serial menu for interacitons, servo control angel setting etc 
+// passthrough NEMA, formatted NEMA, Drift checks of time, location, speed, abilty to configure timezone hardcoded,
+
+// set up the hardware
+
+// Servo Setup
+// Define Servo objects
+Servo servoHourTens;
+Servo servoHourOnes;
+Servo servoMinuteTens;
+Servo servoMinuteOnes;
+Servo servoSecondTens;
+Servo servoSecondOnes;
+
+// Define pin numbers for each servo
+const int pinHourTens = 26;   // GPIO15, corresponds to D15
+const int pinHourOnes = 27;    // GPIO2, corresponds to D2
+const int pinMinuteTens = 19;  // GPIO4, corresponds to D4
+const int pinMinuteOnes = 14; // GPIO16, corresponds to D4
+const int pinSecondTens = 15;  // Choose an available GPIO, example GPIO32
+const int pinSecondOnes = 4;  // Choose an available GPIO, example GPIO33
+
+// Configuration for servo update frequency
+//unsigned long servoUpdateInterval = 1000; // Default to 1000 ms
+//unsigned long lastServoUpdate = 0;
+
+// Arrays to hold angle configurations for each digit (0-9)
+// 7Segment Number        0, 1,  2,  3,  4,  5,   6,   7,   8,   9
+int anglesHourTens[10] = {0, 20, 40, 60, 80, 100, 120, 140, 160, 180};
+int anglesHourOnes[10] = {0, 20, 40, 60, 80, 100, 120, 140, 160, 180};
+// 7Segment Number          0, 1,  2,  3,  4,  5,   6,   7,   8,   9
+int anglesMinuteTens[10] = {0, 20, 40, 60, 80, 100, 0, 0, 0, 0};
+int anglesMinuteOnes[10] = {0, 20, 40, 60, 80, 100, 120, 140, 160, 180};
+// 7Segment Number          0, 1,  2,  3,  4,  5,   6,   7,   8,   9
+int anglesSecondTens[10] = {0, 22, 43, 58, 77, 94, 0, 0, 0, 0};
+int anglesSecondOnes[10] = {0, 22, 43, 58, 77, 95, 112, 134, 147, 170};
+// int anglesSecondTens[10] = {0, 20, 40, 60, 80, 100, 120, 140, 160, 180};
+// int anglesSecondOnes[10] = {0, 20, 40, 60, 80, 100, 120, 140, 160, 180};
+
+// Presence detection
+//bool presenceDetected = true; // Default to true for initial testing
+//unsigned long lastPresenceTime = 0;
+//unsigned long presenceTimeout = 30000; // 30 seconds without human presence before disabling servo movement
+
 // OLED support
 #define SCREEN_WIDTH 128  // OLED display width, in pixels
 #define SCREEN_HEIGHT 64  // OLED display height, in pixels
@@ -22,12 +67,10 @@
 
 // Initialize Adafruit SSD1306 OLED display
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, OLED_MOSI, OLED_CLK, OLED_DC, OLED_RESET, OLED_CS);
-// OLED support
-// set up the hardware
+
+// GPS Setup 
 HardwareSerial gpsSerial(1);  // GPS Module connected to UART1
 TinyGPSPlus gps;              // Create a GPS object
-//LiquidCrystal_I2C lcd(0x27, 16, 2);  // LCD address 0x27 for a 16 chars and 2 line display On pins 21 and 22, just try both ways to get it to work, remember 5v!!
-
 
 //set up the variables
 unsigned long lastSyncTime = 0;
@@ -35,24 +78,23 @@ unsigned long bootTime = 0;
 int displayPage = 0;
 int ledState = LOW;  // Initialize LED state variable, assuming LED is initially off
 bool hasGPSFix = false;
-
 int timezoneOffset = 0;              // Global variable to store the timezone offset
 bool timezoneOffsetUpdated = false;  // Flag to check if the timezone offset needs to be updated
+bool servoUpdateEnabled = true;  // Set true to enable, false to disable servo updates
 
 // Debug you say?
 bool debugEnabled = false;  // Set to false to disable debug output
-
 
 // Set up a variable to contain a NEMA sentance
 String latestNMEA = "";  // Holds the latest NMEA sentence received from the GPS
 
 // set up the counters
 const unsigned long GPSUpdateInterval = 100;  // Time to update the internal clock from the GPS, we can do this all the time if we want
-const unsigned long timeUpdateInterval = 50;  // Timeon the screen updates every 1000 milliseconds (1 second)
-//const unsigned long infoUpdateInterval = 3000;          // Info updates every 3000 milliseconds (3 seconds)
-const unsigned long gpsDataPublishInterval = 1000;      // Set interval for publishing GPS data on the USB serial line, e.g., 5000 milliseconds (5 seconds)
-const unsigned long serialDataPublishInterval = 10000;  // set interval for publishing genral diagonstics device data on USB serial line
-const unsigned long timeZoneUpdateInterval = 60000;     // set interval for updating the TimeZone based off latitude and logitude.
+const unsigned long timeUpdateInterval = 1000;  // Timeon the screen updates every 1000 milliseconds (1 second)
+const unsigned long gpsDataPublishInterval = 5000;      // Set interval for publishing GPS data on the USB serial line, e.g., 5000 milliseconds (5 seconds)
+const unsigned long serialDataPublishInterval = 1000;  // set interval for publishing genral diagonstics device data on USB serial line
+const unsigned long timeZoneUpdateInterval = 600000;     // set interval for updating the TimeZone based off latitude and logitude.
+const unsigned long servoUpdateInterval = 1000;  // Servo update frequency in milliseconds
 
 // set up the icon locations
 // Calling the function with specific positions for the satellite icon and signal bars
@@ -64,6 +106,7 @@ int gpsDataStartY = 25;  // Default starting position for GPS data
 int mainRX_X = 104;      // X position for RX icon
 int mainRX_Y = 0;        // Y position for RX icon
 
+// GPS settings 
 bool isReceivingGPSData = false;     // Flag to indicate receiving data
 unsigned long lastGPSDataTime = 0;   // Last time GPS data was received
 unsigned long flashInterval = 1000;  // Interval for flashing "RX"
@@ -76,6 +119,13 @@ void setup() {
   pinMode(2, OUTPUT);                         // ESP32 Onboard LED set as an output
   bootTime = millis();                        // Record the time when the system started
   setSyncProvider(getGPS);                    // Set the function used to get time from GPS
+  // Attach servos to their respective GPIO pins 
+  servoHourTens.attach(pinHourTens);          // Servo for tens of hours
+  servoHourOnes.attach(pinHourOnes);          // Servo for ones of hours
+  servoMinuteTens.attach(pinMinuteTens);      // Servo for tens of minutes
+  servoMinuteOnes.attach(pinMinuteOnes);      // Servo for ones of minutes
+  servoSecondTens.attach(pinSecondTens);      // Servo for tens of seconds
+  servoSecondOnes.attach(pinSecondOnes);      // Servo for ones of seconds
 
   // Initialize the OLED display
   if (!display.begin(SSD1306_SWITCHCAPVCC)) {
@@ -95,6 +145,7 @@ void loop() {
   static unsigned long lastSerialDataPublish = 0;
   static unsigned long lastTimezoneUpdate = 0;
   static unsigned long lastDataReceivedTime = 0;  // Track the last time data was received
+  static unsigned long lastServoUpdate = 0;  // Last time servos were updated
 
   debugPrint("Entering loop...");
 
@@ -116,7 +167,7 @@ void loop() {
         }
       }
       if (c == '\n') {
-        Serial.println(latestNMEA);  // Print the full NMEA sentence to Serial Monitor
+        debugPrint(latestNMEA);  // Print the full NMEA sentence to Serial Monitor
         latestNMEA = "";             // Reset latestNMEA after printing
       }
       dataReceived = true;
@@ -138,8 +189,13 @@ void loop() {
     lastSecondUpdate = millis();
     debugPrint("Updating time display...");
     displayTimeAndDate(satelliteIconX, satelliteIconY, barsX, barsY, mainRX_X, mainRX_Y);
-    debugPrint("Updating time display... Displaying time and Date");
     //}
+  }
+
+  // Update servo positions based on the specified interval
+  if (millis() - lastServoUpdate >= servoUpdateInterval) {
+    lastServoUpdate = millis();
+    updateServoPositions();  // Update servo positions to current time
   }
 
   // Publish GPS data on a separate timer
@@ -150,7 +206,7 @@ void loop() {
 
   // Send data via serial on its own timer
   if (millis() - lastSerialDataPublish >= serialDataPublishInterval) {
-    lastSerialDataPublish = millis();
+    // lastSerialDataPublish = millis();
     debugPrint("Publishing GPS data on USB serial");
     sendDataViaSerial();  // Send the current time to USB serial
   }
@@ -167,7 +223,51 @@ void loop() {
   //ledState = LOW;
   //digitalWrite(LED_PIN, ledState);
 
-  delay(10);  // Short delay to reduce CPU usage
+  delay(20);  // Short delay to reduce CPU usage
+}
+
+void updateServoPositions() {
+      if (!servoUpdateEnabled) {
+        return;  // Exit the function early if servo updates are disabled
+    }
+    // Renamed variables for clarity
+    int currentServoHour = hourFormat12();   // Get 12-hour format hour
+    int currentServoMinute = minute();       // Get minutes
+    int currentServoSecond = second();       // Get seconds
+
+    // Compute the tens and ones for hour, minutes, and seconds
+    int hourTens = currentServoHour / 10;
+    int hourOnes = currentServoHour % 10;
+    int minuteTens = currentServoMinute / 10;
+    int minuteOnes = currentServoMinute % 10;
+    int secondTens = currentServoSecond / 10;
+    int secondOnes = currentServoSecond % 10;
+
+    // Debugging: Print the current time components
+    if (debugEnabled) {
+        debugPrint("Current Time: " + String(currentServoHour) + ":" + String(currentServoMinute) + ":" + String(currentServoSecond));
+        debugPrint("Hour Tens: " + String(hourTens) + " Hour Ones: " + String(hourOnes));
+        debugPrint("Minute Tens: " + String(minuteTens) + " Minute Ones: " + String(minuteOnes));
+        debugPrint("Second Tens: " + String(secondTens) + " Second Ones: " + String(secondOnes));
+    }
+
+    // Write the calculated angles to each servo
+    servoHourTens.write(anglesHourTens[hourTens]);
+    servoHourOnes.write(anglesHourOnes[hourOnes]);
+    servoMinuteTens.write(anglesMinuteTens[minuteTens]);
+    servoMinuteOnes.write(anglesMinuteOnes[minuteOnes]);
+    servoSecondTens.write(anglesSecondTens[secondTens]);
+    servoSecondOnes.write(anglesSecondOnes[secondOnes]);
+
+    // Debugging: Print the angles set on each servo
+    if (debugEnabled) {
+        debugPrint("Setting Hour Tens Servo to " + String(anglesHourTens[hourTens]) + " degrees");
+        debugPrint("Setting Hour Ones Servo to " + String(anglesHourOnes[hourOnes]) + " degrees");
+        debugPrint("Setting Minute Tens Servo to " + String(anglesMinuteTens[minuteTens]) + " degrees");
+        debugPrint("Setting Minute Ones Servo to " + String(anglesMinuteOnes[minuteOnes]) + " degrees");
+        debugPrint("Setting Second Tens Servo to " + String(anglesSecondTens[secondTens]) + " degrees");
+        debugPrint("Setting Second Ones Servo to " + String(anglesSecondOnes[secondOnes]) + " degrees");
+    }
 }
 
 // helper function to deploy debugs
@@ -257,9 +357,6 @@ void displayTimeAndDate(int satelliteIconX, int satelliteIconY, int barsX, int b
     // Draw the signal bar at a configurable position
     displaySignalBar(barsX, barsY);
 
-    // Update the RX display at the specified position
-    //manageRXDisplay(rxX, rxY);
-
     // Additional GPS data display
     displayAllGPSData();
 
@@ -335,8 +432,8 @@ void adjustTimeZone() {
     // Apply the local time
     setTime(localTime);
     // Optionally, print the adjusted time for verification
-    Serial.print("Adjusted Time: ");
-    printTime(localTime);
+    // debugPrint("Adjusted Time: ");
+    // debugPrint(localTime());
   } else {
     Serial.println("GPS data not valid, cannot adjust timezone.");
     timezoneOffsetUpdated = false;  // Reset the update flag if GPS data is not valid
@@ -377,7 +474,7 @@ void printTime(time_t t) {
   char buffer[30];  // Buffer to hold the formatted time string
   sprintf(buffer, "%02d:%02d:%02d %02d/%02d/%04d\n",
           hour(t), minute(t), second(t), day(t), month(t), year(t));
-  Serial.print(buffer);
+  debugPrint(buffer);
 }
 
 /**
@@ -444,34 +541,34 @@ void displayAllGPSData() {
   display.display();
 }
 
+//
+// void loop() {
+//   // Existing code...
+
+//   // Check for presence and update time
+//   if (millis() - lastPresenceTime <= presenceTimeout) {
+//     presenceDetected = true;
+//   } else {
+//     presenceDetected = false;
+//   }
+
+//   // Update servo positions based on time interval and presence detection
+//   if (presenceDetected && millis() - lastServoUpdate >= servoUpdateInterval) {
+//     lastServoUpdate = millis();
+//     updateServoPositions(); // Update servo positions to current time
+//   }
+
+//   // Existing code...
+// }
 
 
-// void displayAllGPSData() {
-//   display.setTextSize(1);               // Set text size for more data on the screen
-//   display.setTextColor(SSD1306_WHITE);  // Set text color
-
-//   int yPos = gpsDataStartY;  // Use the global variable for the start position
-//   int lineSpacing = 8;       // Space between lines
-
-//   // Display each piece of information on a new line
-//   display.setCursor(0, yPos);
-//   display.println("Altitude: " + String(gps.altitude.meters()) + "m");
-
-//   display.setCursor(0, yPos + lineSpacing * 1);
-//   display.println("Satalites: " + String(gps.satellites.value()));
-
-//   display.setCursor(0, yPos + lineSpacing * 2);
-//   display.println("Lat: " + String(gps.location.lat(), 6));
-
-//   display.setCursor(0, yPos + lineSpacing * 3);
-//   display.println("Long: " + String(gps.location.lng(), 6));
-
-//   display.setCursor(0, yPos + lineSpacing * 4);
-//   display.println("UTC Offset: " + String(timezoneOffset));
-
-//   display.display();
-//}
-
+// void checkPresence() {
+//   // Example of manual presence checking
+//   // Later replace with sensor input
+//   if (digitalRead(PIR_PIN) == HIGH) { // Assuming PIR_PIN is defined where your PIR sensor is connected
+//     lastPresenceTime = millis();
+//   }
+// }
 
 // push data to serial,
 void publishGPSData() {
