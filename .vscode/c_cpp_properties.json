@@ -3,7 +3,10 @@
         {
             "name": "Mac",
             "includePath": [
-                "${workspaceFolder}/**"
+                "${workspaceFolder}/**",
+                "/Users/luketrav/.platformio/packages/framework-arduinoespressif32/cores/esp32",
+                "/Users/luketrav/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/freertos/include",
+                "/Users/luketrav/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/freertos/include/esp_additions/freertos"
             ],
             "defines": [],
             "macFrameworkPath": [

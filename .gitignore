@@ -1,0 +1,26 @@
+# Ignore Python compiled files
+*.pyc
+__pycache__/
+
+# Ignore PlatformIO build output and temporary files
+.pio/
+.pioenvs/
+.piolibdeps/
+.pio/build/
+.pio/libdeps/
+
+# Ignore Visual Studio Code settings
+.vscode/
+*.code-workspace
+
+# Ignore other unwanted files
+.history/
+*.DS_Store
+*.bak
+*.tmp
+*.log
+
+# Ignore specific sensitive files or configuration files (if any)
+# secrets.json
+# config.yaml
+
